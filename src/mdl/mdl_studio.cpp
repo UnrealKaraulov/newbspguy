@@ -5,6 +5,68 @@
 #include "Settings.h"
 #include "Renderer.h"
 #include "forcecrc32.h"
+#include <chrono>
+#include <memory>
+#include <cmath>
+#include <cfloat>
+
+void StudioModel::invalidateFrameCache()
+{
+    ++cacheStateVersion;
+    frameCache.clear();
+}
+
+std::shared_ptr<StudioModel::CachedFrame> StudioModel::buildCachedFrame()
+{
+    auto frame = std::make_shared<CachedFrame>();
+    frame->meshGroups.resize(mdl_mesh_groups.size());
+
+    for (size_t body = 0; body < mdl_mesh_groups.size(); ++body)
+    {
+        const auto& srcBody = mdl_mesh_groups[body];
+        auto& dstBody = frame->meshGroups[body];
+        dstBody.reserve(srcBody.size());
+
+        for (const auto& srcMesh : srcBody)
+        {
+            StudioMesh dstMesh;
+            dstMesh.texture = srcMesh.texture;
+
+            if (srcMesh.verts)
+            {
+                dstMesh.verts = std::make_shared<std::vector<modelVert>>(*srcMesh.verts);
+            }
+            else
+            {
+                dstMesh.verts = std::make_shared<std::vector<modelVert>>();
+            }
+
+            dstMesh.buffer = std::shared_ptr<VertexBuffer>(new VertexBuffer(g_app->modelShader, nullptr, 0, GL_TRIANGLES));
+            if (dstMesh.verts && !dstMesh.verts->empty())
+            {
+                dstMesh.buffer->setData(&(*dstMesh.verts)[0], static_cast<int>(dstMesh.verts->size()));
+            }
+
+            dstBody.push_back(std::move(dstMesh));
+        }
+    }
+
+    frame->mins = mins;
+    frame->maxs = maxs;
+    frame->hasBounds = true;
+
+    return frame;
+}
+
+StudioModel::FrameKey StudioModel::makeFrameKey(int frameIndex) const
+{
+    return FrameKey{ m_sequence, m_body, m_skinnum, frameIndex, cacheStateVersion };
+}
+
+bool StudioModel::hasRenderableMeshes() const
+{
+    return !mdl_mesh_groups.empty() || !frameCache.empty();
+}
 
 void StudioModel::CalcBoneAdj()
 {
@@ -602,7 +664,10 @@ void StudioModel::RefreshMeshList(int body)
 
 		for (int j = 0; j < m_pmodel->nummesh; j++)
 		{
-			mdl_mesh_groups[body][j].buffer = new VertexBuffer(g_app->modelShader, NULL, 0, GL_TRIANGLES);
+			if (!mdl_mesh_groups[body][j].buffer)
+			{
+				mdl_mesh_groups[body][j].buffer = std::shared_ptr<VertexBuffer>(new VertexBuffer(g_app->modelShader, NULL, 0, GL_TRIANGLES));
+			}
 		}
 	}
 
@@ -757,22 +822,22 @@ void StudioModel::RefreshMeshList(int body)
 			}
 		}
 
-		if ((int)mdl_mesh_groups[body][j].verts.size() < totalElements)
+		if ((int)mdl_mesh_groups[body][j].verts->size() < totalElements)
 		{
-			mdl_mesh_groups[body][j].verts.resize(totalElements);
-			mdl_mesh_groups[body][j].buffer->setData(&mdl_mesh_groups[body][j].verts[0], (int)(mdl_mesh_groups[body][j].verts.size()));
+			mdl_mesh_groups[body][j].verts->resize(totalElements);
+			mdl_mesh_groups[body][j].buffer->setData(&(*mdl_mesh_groups[body][j].verts)[0], (int)mdl_mesh_groups[body][j].verts->size());
 		}
-		for (int z = 0; z < (int)mdl_mesh_groups[body][j].verts.size(); z++)
+		for (int z = 0; z < (int)mdl_mesh_groups[body][j].verts->size(); z++)
 		{
-			mdl_mesh_groups[body][j].verts[z].u = texCoordData[z * 2 + 0];
-			mdl_mesh_groups[body][j].verts[z].v = texCoordData[z * 2 + 1];
-			/*mdl_mesh_groups[body][j].verts[z].r = colorData[z * 4 + 0];
-			mdl_mesh_groups[body][j].verts[z].g = colorData[z * 4 + 1];
-			mdl_mesh_groups[body][j].verts[z].b = colorData[z * 4 + 2];
-			mdl_mesh_groups[body][j].verts[z].a = 1.0;*/
-			mdl_mesh_groups[body][j].verts[z].pos.x = vertexData[z * 3 + 0];
-			mdl_mesh_groups[body][j].verts[z].pos.y = vertexData[z * 3 + 2];
-			mdl_mesh_groups[body][j].verts[z].pos.z = -vertexData[z * 3 + 1];
+			(*mdl_mesh_groups[body][j].verts)[z].u = texCoordData[z * 2 + 0];
+			(*mdl_mesh_groups[body][j].verts)[z].v = texCoordData[z * 2 + 1];
+			/*(*mdl_mesh_groups[body][j].verts)[z].r = colorData[z * 4 + 0];
+			(*mdl_mesh_groups[body][j].verts)[z].g = colorData[z * 4 + 1];
+			(*mdl_mesh_groups[body][j].verts)[z].b = colorData[z * 4 + 2];
+			(*mdl_mesh_groups[body][j].verts)[z].a = 1.0;*/
+			(*mdl_mesh_groups[body][j].verts)[z].pos.x = vertexData[z * 3 + 0];
+			(*mdl_mesh_groups[body][j].verts)[z].pos.y = vertexData[z * 3 + 2];
+			(*mdl_mesh_groups[body][j].verts)[z].pos.z = -vertexData[z * 3 + 1];
 
 			if (needForceUpdate)
 			{
@@ -906,100 +971,158 @@ studioseqhdr_t* StudioModel::LoadDemandSequences(const std::string& modelname, i
 
 void StudioModel::DrawMDL(int meshnum)
 {
-	if (frametime < 0.0f)
-		frametime = g_app->curTime;
+    if (frametime < 0.0f)
+        frametime = g_app->curTime;
 
-	if (needForceUpdate || (g_app->curTime - frametime > (1.0f / fps) && !ortho_overview && (g_render_flags & RENDER_MODELS_ANIMATED)))
-	{
-		if (needForceUpdate)
-		{
-			if (mdl_mesh_groups.size())
-			{
-				for (auto& body : mdl_mesh_groups)
-				{
-					if (body.size())
-					{
-						for (auto& submesh : body)
-						{
-							delete submesh.buffer;
-						}
-					}
-				}
-			}
-			mdl_mesh_groups = std::vector<std::vector<StudioMesh>>();
-		}
+    bool animationEnabled = (g_render_flags & RENDER_MODELS_ANIMATED) && !ortho_overview;
+    double currentTime = g_app->curTime;
 
-		if (mdl_mesh_groups.size())
-		{
-			for (auto& body : mdl_mesh_groups)
-			{
-				if (body.size())
-				{
-					for (auto& submesh : body)
-					{
-						if (submesh.buffer)
-						{
-							submesh.buffer->uploaded = false;
-						}
-					}
-				}
-			}
-		}
+    int frameIndex = static_cast<int>(std::floor(m_frame));
 
-		AdvanceFrame((1.0f / fps));
-		UpdateModelMeshList();
-		this->frametime = -1.0f;
-	}
+    double advanceDurationMs = 0.0;
+    bool frameAdvanced = false;
 
-	needForceUpdate = false;
+    if (animationEnabled)
+    {
+        double deltaSeconds = 0.0;
+        if (m_prevAnimTime > 0.0)
+            deltaSeconds = currentTime - m_prevAnimTime;
+        if (deltaSeconds < 0.0)
+            deltaSeconds = 0.0;
+        if (deltaSeconds > 0.1)
+            deltaSeconds = 0.1;
+        m_prevAnimTime = currentTime;
 
+        if (deltaSeconds > 0.0 && fps > FLT_EPSILON)
+        {
+            using clock = std::chrono::steady_clock;
+            auto advanceStart = clock::now();
+            AdvanceFrame(static_cast<float>(deltaSeconds));
+            auto advanceEnd = clock::now();
+            advanceDurationMs = std::chrono::duration<double, std::milli>(advanceEnd - advanceStart).count();
 
-	if (meshnum >= 0)
-	{
-		if (mdl_mesh_groups.size() && meshnum < (int)mdl_mesh_groups[0].size())
-		{
-			Texture* validTexture = mdl_mesh_groups[0][meshnum].texture;
+            frameIndex = static_cast<int>(std::floor(m_frame));
+            if (frameIndex != m_lastFrameIndex)
+            {
+                frameAdvanced = true;
+                m_lastFrameIndex = frameIndex;
+            }
+        }
+    }
+    else
+    {
+        m_prevAnimTime = currentTime;
+        frameIndex = static_cast<int>(std::floor(m_frame));
+    }
 
-			if (mdl_mesh_groups[0][meshnum].texture)
-			{
-				mdl_mesh_groups[0][meshnum].texture->bind(0);
-			}
-			else if (validTexture)
-			{
-				validTexture->bind(0);
-			}
-			else
-			{
-				whiteTex->bind(0);
-			}
-			mdl_mesh_groups[0][meshnum].buffer->drawFull();
-		}
-	}
-	else
-	{
-		for (size_t group = 0; group < mdl_mesh_groups.size(); group++)
-		{
-			for (size_t meshid = 0; meshid < mdl_mesh_groups[group].size(); meshid++)
-			{
-				Texture* validTexture = mdl_mesh_groups[group][meshid].texture;
+    std::shared_ptr<CachedFrame> cachedFrame;
+    bool cacheHit = false;
 
-				if (mdl_mesh_groups[group][meshid].texture)
-				{
-					mdl_mesh_groups[group][meshid].texture->bind(0);
-				}
-				else if (validTexture)
-				{
-					validTexture->bind(0);
-				}
-				else
-				{
-					whiteTex->bind(0);
-				}
-				mdl_mesh_groups[group][meshid].buffer->drawFull();
-			}
-		}
-	}
+    FrameKey key = makeFrameKey(frameIndex);
+
+    if (!needForceUpdate)
+    {
+        auto it = frameCache.find(key);
+        if (it != frameCache.end())
+        {
+            cachedFrame = it->second;
+            cacheHit = cachedFrame != nullptr;
+        }
+    }
+    else
+    {
+        invalidateFrameCache();
+    }
+
+    bool shouldRefresh = needForceUpdate || !cacheHit;
+
+    if (shouldRefresh)
+    {
+        bool forceUpdate = needForceUpdate;
+
+        if (needForceUpdate)
+        {
+            mdl_mesh_groups.clear();
+        }
+
+        if (!mdl_mesh_groups.empty())
+        {
+            for (auto& body : mdl_mesh_groups)
+            {
+                for (auto& submesh : body)
+                {
+                    if (submesh.buffer)
+                    {
+                        submesh.buffer->uploaded = false;
+                    }
+                }
+            }
+        }
+
+        UpdateModelMeshList();
+
+        cachedFrame = buildCachedFrame();
+        frameCache[key] = cachedFrame;
+        cacheHit = true;
+    }
+
+    needForceUpdate = false;
+
+    const auto& drawMeshGroups = (cacheHit && cachedFrame) ? cachedFrame->meshGroups : mdl_mesh_groups;
+
+    if (cachedFrame && cachedFrame->hasBounds)
+    {
+        mins = cachedFrame->mins;
+        maxs = cachedFrame->maxs;
+    }
+
+    if (meshnum >= 0)
+    {
+        if (!drawMeshGroups.empty() && meshnum < (int)drawMeshGroups[0].size())
+        {
+            Texture* validTexture = drawMeshGroups[0][meshnum].texture;
+
+            if (drawMeshGroups[0][meshnum].texture)
+            {
+                drawMeshGroups[0][meshnum].texture->bind(0);
+            }
+            else if (validTexture)
+            {
+                validTexture->bind(0);
+            }
+            else
+            {
+                whiteTex->bind(0);
+            }
+            drawMeshGroups[0][meshnum].buffer->drawFull();
+        }
+    }
+    else
+    {
+        for (size_t group = 0; group < drawMeshGroups.size(); group++)
+        {
+            for (size_t meshid = 0; meshid < drawMeshGroups[group].size(); meshid++)
+            {
+                Texture* validTexture = drawMeshGroups[group][meshid].texture;
+
+                if (drawMeshGroups[group][meshid].texture)
+                {
+                    drawMeshGroups[group][meshid].texture->bind(0);
+                }
+                else if (validTexture)
+                {
+                    validTexture->bind(0);
+                }
+                else
+                {
+                    whiteTex->bind(0);
+                }
+                drawMeshGroups[group][meshid].buffer->drawFull();
+            }
+        }
+    }
 }
+
 
 void StudioModel::Init(const std::string& modelname)
 {
@@ -1092,6 +1215,9 @@ int StudioModel::SetSequence(int iSequence)
 	if (iSequence != m_sequence)
 	{
 		needForceUpdate = true;
+		m_lastFrameIndex = -1;
+		m_prevAnimTime = 0.0;
+		invalidateFrameCache();
 	}
 	m_sequence = iSequence;
 	m_frame = 0;
@@ -1117,7 +1243,11 @@ int StudioModel::SetSkin(int iValue)
 	}
 
 	if (iValue != m_skinnum)
+	{
 		needForceUpdate = true;
+		m_lastFrameIndex = -1;
+		invalidateFrameCache();
+	}
 
 	m_skinnum = iValue;
 	return iValue;
@@ -1317,6 +1447,7 @@ int StudioModel::SetBodygroup(int iGroup, int iValue)
 	m_bodynum = (m_bodynum - (iCurrent * pbodypart->base) + (iValue * pbodypart->base));
 
 	needForceUpdate = true;
+	invalidateFrameCache();
 
 	return iValue;
 }

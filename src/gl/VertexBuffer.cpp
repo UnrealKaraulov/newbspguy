@@ -15,7 +15,7 @@ VertexBuffer::VertexBuffer(ShaderProgram* shaderProgram, void* dat, int _numVert
     setData(dat, _numVerts);
 }
 
-VertexBuffer::~VertexBuffer()
+VertexBuffer::~VertexBuffer() noexcept
 {
     deleteBuffer();
     if (ownData && data)
@@ -24,6 +24,61 @@ VertexBuffer::~VertexBuffer()
     }
     data = nullptr;
     numVerts = 0;
+}
+
+VertexBuffer::VertexBuffer(VertexBuffer&& other) noexcept
+    : shaderProgram(other.shaderProgram)
+    , numVerts(other.numVerts)
+    , primitive(other.primitive)
+    , frameId(other.frameId)
+    , ownData(other.ownData)
+    , uploaded(other.uploaded)
+    , data(other.data)
+    , vboId(other.vboId)
+    , vaoId(other.vaoId)
+{
+    // Reset the other object so it doesn't delete the resources
+    other.shaderProgram = nullptr;
+    other.data = nullptr;
+    other.numVerts = 0;
+    other.vboId = 0xFFFFFFFF;
+    other.vaoId = 0xFFFFFFFF;
+    other.ownData = false;
+    other.uploaded = false;
+}
+
+VertexBuffer& VertexBuffer::operator=(VertexBuffer&& other) noexcept
+{
+    if (this != &other)
+    {
+        // Clean up existing resources
+        deleteBuffer();
+        if (ownData && data)
+        {
+            delete[] data;
+        }
+
+        // Transfer ownership from other
+        shaderProgram = other.shaderProgram;
+        numVerts = other.numVerts;
+        primitive = other.primitive;
+        frameId = other.frameId;
+        ownData = other.ownData;
+        uploaded = other.uploaded;
+        data = other.data;
+        vboId = other.vboId;
+        vaoId = other.vaoId;
+
+        // Reset the other object
+        other.shaderProgram = nullptr;
+        other.data = nullptr;
+        other.numVerts = 0;
+        other.vboId = 0xFFFFFFFF;
+        other.vaoId = 0xFFFFFFFF;
+        other.ownData = false;
+        other.uploaded = false;
+    }
+    return *this;
 }
 
 void VertexBuffer::setData(void* _data, int _numVerts)

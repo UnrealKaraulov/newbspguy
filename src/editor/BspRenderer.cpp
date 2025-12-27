@@ -3269,7 +3269,7 @@ void BspRenderer::drawPointEntities(std::vector<int> highlightEnts, int pass)
 			if (g_render_flags & RENDER_SELECTED_AT_TOP)
 				glDepthFunc(GL_ALWAYS);
 			if ((g_render_flags & RENDER_MODELS) && (renderEnts[i].spr
-				|| (renderEnts[i].mdl && renderEnts[i].mdl->mdl_mesh_groups.size())))
+				|| (renderEnts[i].mdl && renderEnts[i].mdl->hasRenderableMeshes())))
 			{
 				if (pass == REND_PASS_MODELSHADER)
 				{
@@ -3329,7 +3329,7 @@ void BspRenderer::drawPointEntities(std::vector<int> highlightEnts, int pass)
 		else
 		{
 			if ((g_render_flags & RENDER_MODELS) && (renderEnts[i].spr
-				|| (renderEnts[i].mdl && renderEnts[i].mdl->mdl_mesh_groups.size())))
+				|| (renderEnts[i].mdl && renderEnts[i].mdl->hasRenderableMeshes())))
 			{
 				if (pass == REND_PASS_MODELSHADER)
 				{

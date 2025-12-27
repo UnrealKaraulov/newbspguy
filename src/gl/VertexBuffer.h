@@ -16,7 +16,15 @@ public:
 	// Specify which common attributes to use. They will be located in the
 	// shader program. If passing data, note that data is not copied, but referenced
 	VertexBuffer(ShaderProgram* shaderProgram, void* dat, int numVerts, int primitive = 0);
-	~VertexBuffer();
+	~VertexBuffer() noexcept;
+
+	// Delete copy operations since this class manages OpenGL resources
+	VertexBuffer(const VertexBuffer&) = delete;
+	VertexBuffer& operator=(const VertexBuffer&) = delete;
+
+	// Move operations transfer ownership of OpenGL resources
+	VertexBuffer(VertexBuffer&& other) noexcept;
+	VertexBuffer& operator=(VertexBuffer&& other) noexcept;
 
 	// Note: Data is not copied into the class - don't delete your data.
 	//       Data will be deleted when the buffer is destroyed.

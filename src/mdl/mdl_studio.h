@@ -10,7 +10,10 @@
 #include "Texture.h"
 #include "PointEntRenderer.h"
 
+#include <functional>
 #include <map>
+#include <memory>
+#include <unordered_map>
 /***
 *
 *	Copyright (c) 1996-2002, Valve LLC. All rights reserved.
@@ -336,19 +339,66 @@ typedef struct mstudioevent_s
 
 struct StudioMesh
 {
-	VertexBuffer* buffer;
+	std::shared_ptr<VertexBuffer> buffer;
 	Texture* texture;
-	std::vector<modelVert> verts;
+	std::shared_ptr<std::vector<modelVert>> verts;
+
 	StudioMesh()
+		: buffer(nullptr), texture(nullptr), verts(std::make_shared<std::vector<modelVert>>())
 	{
-		buffer = NULL;
-		texture = NULL;
-		verts = std::vector<modelVert>();
 	}
+
+	// Explicitly define copy and move operations
+	StudioMesh(const StudioMesh& other) = default;
+	StudioMesh(StudioMesh&& other) noexcept = default;
+	StudioMesh& operator=(const StudioMesh& other) = default;
+	StudioMesh& operator=(StudioMesh&& other) noexcept = default;
+	~StudioMesh() = default;
 };
 
 class StudioModel
 {
+	struct FrameKey
+	{
+		int sequence;
+		int body;
+		int skin;
+		int frame;
+		int stateVersion;
+
+		bool operator==(const FrameKey& other) const noexcept
+		{
+			return sequence == other.sequence && body == other.body && skin == other.skin && frame == other.frame && stateVersion == other.stateVersion;
+		}
+	};
+
+	struct FrameKeyHash
+	{
+		std::size_t operator()(const FrameKey& key) const noexcept
+		{
+			std::size_t h = std::hash<int>{}(key.sequence);
+			h ^= std::hash<int>{}(key.body) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<int>{}(key.skin) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<int>{}(key.frame) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			h ^= std::hash<int>{}(key.stateVersion) + 0x9e3779b9 + (h << 6) + (h >> 2);
+			return h;
+		}
+	};
+
+	struct CachedFrame
+	{
+		std::vector<std::vector<StudioMesh>> meshGroups;
+		vec3 mins;
+		vec3 maxs;
+		bool hasBounds = false;
+	};
+
+
+private:
+	void invalidateFrameCache();
+	std::shared_ptr<CachedFrame> buildCachedFrame();
+	FrameKey makeFrameKey(int frameIndex) const;
+
 public:
 	// entity settings
 	float fps;
@@ -398,8 +448,14 @@ public:
 	vec4 m_adj;				// FIX: non persistant, make static
 	std::vector<Texture*> mdl_textures;
 	std::vector<std::vector<StudioMesh>> mdl_mesh_groups;
+	std::unordered_map<FrameKey, std::shared_ptr<CachedFrame>, FrameKeyHash> frameCache;
+	int cacheStateVersion = 0;
 
 	std::string filename;
+
+	bool hasRenderableMeshes() const;
+	double m_prevAnimTime;
+	int m_lastFrameIndex;
 
 	StudioModel(std::string modelname) : filename(std::move(modelname))
 	{
@@ -417,11 +473,15 @@ public:
 		g_lambert = 1.0f;
 		mdl_textures = std::vector<Texture*>();
 		mdl_mesh_groups = std::vector<std::vector<StudioMesh>>();
+		frameCache.clear();
+		cacheStateVersion = 0;
 		m_sequence = m_skinnum = 0;
 		m_frame = 0.0f;
 		m_mouth = 0;
 		m_pstudiohdr = NULL;
 		m_pmodel = NULL;
+        m_prevAnimTime = 0.0;
+        m_lastFrameIndex = -1;
 
 		for (int i = 0; i < 32; i++)
 		{
@@ -494,17 +554,8 @@ public:
 		{
 			delete[] m_panimhdr[i];
 		}
-		for (auto& body : mdl_mesh_groups)
-		{
-			for (auto& submesh : body)
-			{
-				if (submesh.buffer)
-				{
-					delete submesh.buffer;
-				}
-			}
-		}
-		mdl_mesh_groups.clear();
+	mdl_mesh_groups.clear();
+	frameCache.clear();
 	}
 
 	void DrawMDL(int mesh = -1);

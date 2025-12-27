@@ -13716,7 +13716,7 @@ void Bsp::import_mdl_to_bsp(int ent, int generateClipnodes, bool splitMeshes)
 						tmpMesh.push_back(rendmdl->mdl_mesh_groups[group][meshid]);
 						if (generateClipnodes)
 						{
-							for (auto v : rendmdl->mdl_mesh_groups[group][meshid].verts)
+							for (auto v : *rendmdl->mdl_mesh_groups[group][meshid].verts)
 								all_verts.push_back((angle_mat * vec4(v.pos.flipUV(), 1.0f)).xyz());
 						}
 
@@ -13748,7 +13748,7 @@ void Bsp::import_mdl_to_bsp(int ent, int generateClipnodes, bool splitMeshes)
 						merged_meshes.push_back(rendmdl->mdl_mesh_groups[group][meshid]);
 						if (generateClipnodes)
 						{
-							for (auto v : rendmdl->mdl_mesh_groups[group][meshid].verts)
+							for (auto v : *rendmdl->mdl_mesh_groups[group][meshid].verts)
 								all_verts.push_back((angle_mat * vec4(v.pos.flipUV(), 1.0f)).xyz());
 						}
 					}
@@ -14017,7 +14017,7 @@ int Bsp::import_mdl_to_bspmodel(std::vector<StudioMesh>& meshes, mat4x4 angles, 
 		std::vector<int> newVertIndexes;
 
 		int startVertCount = vertCount;
-		int newVertCount = startVertCount + (int)(mesh_verts.size());
+		int newVertCount = startVertCount + (int)(mesh_verts->size());
 
 		vec3* newverts = new vec3[newVertCount];
 		memcpy(newverts, verts, startVertCount * sizeof(vec3));
@@ -14033,8 +14033,8 @@ int Bsp::import_mdl_to_bspmodel(std::vector<StudioMesh>& meshes, mat4x4 angles, 
 
 		for (v = (int)startVertCount; v < newVertCount; v++)
 		{
-			newverts[v] = (angles * vec4(mesh_verts[v - startVertCount].pos.unflip(), 1.0f)).xyz();
-			newuv[v] = { mesh_verts[v - startVertCount].u, mesh_verts[v - startVertCount].v };
+			newverts[v] = (angles * vec4((*mesh_verts)[v - startVertCount].pos.unflip(), 1.0f)).xyz();
+			newuv[v] = { (*mesh_verts)[v - startVertCount].u, (*mesh_verts)[v - startVertCount].v };
 			newVertIndexes.push_back(v);
 			expandBoundingBox(newverts[v], mins, maxs);
 		}
@@ -14043,7 +14043,7 @@ int Bsp::import_mdl_to_bspmodel(std::vector<StudioMesh>& meshes, mat4x4 angles, 
 		std::map<int, int> vertToSurfedge;
 		bool inverse = false;
 		unsigned int startEdge = edgeCount;
-		int newdedgescount = startEdge + ((int)(mesh_verts.size()) + 1) / 2;
+		int newdedgescount = startEdge + ((int)(mesh_verts->size()) + 1) / 2;
 		BSPEDGE32* newedges = new BSPEDGE32[newdedgescount];
 		memcpy(newedges, edges, startEdge * sizeof(BSPEDGE32));
 		replace_lump(LUMP_EDGES, newedges, newdedgescount * sizeof(BSPEDGE32));
@@ -14052,10 +14052,10 @@ int Bsp::import_mdl_to_bspmodel(std::vector<StudioMesh>& meshes, mat4x4 angles, 
 
 
 		v = 0;
-		for (unsigned int i = 0; i < mesh_verts.size(); i += 2)
+		for (unsigned int i = 0; i < mesh_verts->size(); i += 2)
 		{
 			unsigned int v0 = i;
-			unsigned int v1 = (i + 1) % mesh_verts.size();
+			unsigned int v1 = (i + 1) % mesh_verts->size();
 			newedges[startEdge + v] = BSPEDGE32((unsigned int)newVertIndexes[v0], (unsigned int)newVertIndexes[v1]);
 
 			vertToSurfedge[v0] = startEdge + v;
@@ -14071,7 +14071,7 @@ int Bsp::import_mdl_to_bspmodel(std::vector<StudioMesh>& meshes, mat4x4 angles, 
 		inverse = false;
 
 		int startSurfedgeCount = surfedgeCount;
-		int newsurfedges_count = startSurfedgeCount + (int)(mesh_verts.size());
+		int newsurfedges_count = startSurfedgeCount + (int)(mesh_verts->size());
 		int* newsurfedges = new int[newsurfedges_count];
 		memcpy(newsurfedges, surfedges, startSurfedgeCount * sizeof(int));
 		replace_lump(LUMP_SURFEDGES, newsurfedges, newsurfedges_count * sizeof(int));
@@ -14083,7 +14083,7 @@ int Bsp::import_mdl_to_bspmodel(std::vector<StudioMesh>& meshes, mat4x4 angles, 
 			newsurfedges[v] = vertToSurfedge[v - (int)startSurfedgeCount];
 		}
 
-		int numTriangles = (int)(mesh_verts.size()) / 3;
+		int numTriangles = (int)(mesh_verts->size()) / 3;
 		modelFaces += (int)numTriangles;
 
 		int startFaceCount = faceCount;
